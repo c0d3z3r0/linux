@@ -86,6 +86,9 @@
 #define TCO2_CNT(p)	(TCOBASE(p) + 0x0a) /* TCO2 Control Register	*/
 #define TCOv2_TMR(p)	(TCOBASE(p) + 0x12) /* TCOv2 Timer Initial Value*/
 
+#define SBREG_BAR		0x10
+#define P2SB_TCOCFG		0xc60000
+
 /* internal variables */
 struct iTCO_wdt_private {
 	struct watchdog_device wddev;
@@ -93,6 +96,7 @@ struct iTCO_wdt_private {
 	/* TCO version/generation */
 	unsigned int iTCO_version;
 	struct resource *tco_res;
+	struct resource *smi_res;
 	struct resource *smi_res;
 	/*
 	 * NO_REBOOT flag is Memory-Mapped GCS register bit 5 (TCO version 2),
@@ -398,6 +402,62 @@ static unsigned int iTCO_wdt_get_timeleft(struct watchdog_device *wd_dev)
 }
 
 /*
+ * https://gist.github.com/kylemanna/55fabfe80b76fc640b2a59aa6e7ac9b4
+ * https://lore.kernel.org/patchwork/patch/736647/
+ * drivers/i2c/i2c-i801.c
+ */
+static int iTCO_wdt_get_intruder(struct watchdog_device *wd_dev)
+{
+	struct iTCO_wdt_private *p = watchdog_get_drvdata(wd_dev);
+	unsigned int val16;
+	int intruder = 0;
+
+	spin_lock(&p->io_lock);
+	val16 = inw(TCO2_STS(p));
+	spin_unlock(&p->io_lock);
+	intruder = val16 & 1;
+
+	if(intruder == 1)
+		outw(0x0001, TCO2_STS(p));
+
+	val16 = inw(TCO2_CNT(p));
+	val16 = (val16 & ~0x0006);
+	outw(val16, TCO2_CNT(p));
+	pr_info("sel: 0x%02x\n", (inw(TCO2_CNT(p))&0x0006)>>1);
+
+	u32 tcoctl;
+	pci_read_config_dword(p->pci_dev, 0x054, &tcoctl);
+	pr_info("tco base en: %u\n", tcoctl&BIT(8);
+	tcoctl |= BIT(8);
+	pci_write_config_dword(p->pci_dev, 0x054, tcoctl);
+	pci_read_config_dword(p->pci_dev, 0x054, &tcoctl);
+	pr_info("tco base en: %u\n", tcoctl&BIT(8);
+
+	u32 tcocfg;
+	tcocfg = inl(0x10+0x6C+0x00);
+	tcoctl &= ~0x80;
+	pci_write_config_dword(p->pci_dev, 0x054, tcoctl);
+	tcoctl |= 0x02;
+	pci_write_config_dword(p->pci_dev, 0x054, tcoctl);
+
+	pci_read_config_dword(p->pci_dev, 0x054, &tcoctl);
+	pr_info("tctl: %04x\n", tcoctl&0xff);
+
+	tcoctl |= 0x80;
+	pci_write_config_dword(p->pci_dev, 0x054, tcoctl);
+	pr_info("tctl: %04x\n", tcoctl&0xff);
+	pci_read_config_dword(p->pci_dev, 0x054, &tcoctl);
+	pr_info("tctl: %04x\n", tcoctl&0xff);
+
+	val16 = inw(TCO2_CNT(p));
+	val16 = (val16 & ~0x0006)|(0x01<<1);
+	outw(val16, TCO2_CNT(p));
+	pr_info("sel: 0x%02x\n", (inw(TCO2_CNT(p))&0x0006)>>1);
+
+	return intruder;
+}
+
+/*
  *	Kernel Interfaces
  */
 
@@ -416,6 +476,7 @@ static const struct watchdog_ops iTCO_wdt_ops = {
 	.ping =			iTCO_wdt_ping,
 	.set_timeout =		iTCO_wdt_set_timeout,
 	.get_timeleft =		iTCO_wdt_get_timeleft,
+	.get_intruder = 	iTCO_wdt_get_intruder,
 };
 
 /*
@@ -553,6 +614,7 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 
 	pr_info("initialized. heartbeat=%d sec (nowayout=%d)\n",
 		heartbeat, nowayout);
+
 
 	return 0;
 }

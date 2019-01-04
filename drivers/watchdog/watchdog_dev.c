@@ -427,6 +427,19 @@ static int watchdog_get_timeleft(struct watchdog_device *wdd,
 	return 0;
 }
 
+static int watchdog_get_intruder(struct watchdog_device *wdd,
+							int *intruder)
+{
+	*intruder = 0;
+
+	if (!wdd->ops->get_intruder)
+		return -EOPNOTSUPP;
+
+	*timeleft = wdd->ops->get_intruder(wdd);
+
+	return 0;
+}
+
 #ifdef CONFIG_WATCHDOG_SYSFS
 static ssize_t nowayout_show(struct device *dev, struct device_attribute *attr,
 				char *buf)
@@ -478,6 +491,24 @@ static ssize_t timeleft_show(struct device *dev, struct device_attribute *attr,
 	return status;
 }
 static DEVICE_ATTR_RO(timeleft);
+
+static ssize_t intruder_show(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct watchdog_device *wdd = dev_get_drvdata(dev);
+	struct watchdog_core_data *wd_data = wdd->wd_data;
+	ssize_t status;
+	int val;
+
+	mutex_lock(&wd_data->lock);
+	status = watchdog_get_intruder(wdd, &val);
+	mutex_unlock(&wd_data->lock);
+	if (!status)
+		status = sprintf(buf, "%u\n", val);
+
+	return status;
+}
+static DEVICE_ATTR_RO(intruder);
 
 static ssize_t timeout_show(struct device *dev, struct device_attribute *attr,
 				char *buf)
@@ -574,6 +605,7 @@ static struct attribute *wdt_attrs[] = {
 	&dev_attr_timeout.attr,
 	&dev_attr_pretimeout.attr,
 	&dev_attr_timeleft.attr,
+	&dev_attr_intruder.attr,
 	&dev_attr_bootstatus.attr,
 	&dev_attr_status.attr,
 	&dev_attr_nowayout.attr,
