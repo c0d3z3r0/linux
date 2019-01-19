@@ -93,16 +93,8 @@ else
 	revision=$(cat .version 2>/dev/null||echo 1)
 	packageversion=$version-$revision
 fi
-sourcename=$KDEB_SOURCENAME
-packagename=linux-image-$version
-kernel_headers_packagename=linux-headers-$version
-dbg_packagename=$packagename-dbg
 debarch=
 set_debarch
-
-if [ "$ARCH" = "um" ] ; then
-	packagename=user-mode-linux-$version
-fi
 
 email=${DEBEMAIL-$EMAIL}
 
@@ -141,7 +133,7 @@ extra_build_depends="$extra_build_depends, $(if_enabled_echo CONFIG_SYSTEM_TRUST
 
 # Generate a simple changelog template
 cat <<EOF > debian/changelog
-$sourcename ($packageversion) $distribution; urgency=low
+$KDEB_SOURCENAME ($packageversion) $distribution; urgency=low
 
   * Custom built Linux kernel.
 
@@ -170,20 +162,22 @@ EOF
 
 # Generate a control file
 cat <<EOF > debian/control
-Source: $sourcename
+Source: $KDEB_SOURCENAME
 Section: kernel
 Priority: optional
 Maintainer: $maintainer
 Build-Depends: bc, rsync, kmod, cpio, bison, flex | flex:native $extra_build_depends
 Homepage: http://www.kernel.org/
 
-Package: $packagename
+Package: linux-image-$debarch
+Provides: linux-image-$packageversion-$debarch
 Architecture: $debarch
 Description: Linux kernel, version $version
  This package contains the Linux kernel, modules and corresponding other
  files, version: $version.
 
-Package: $kernel_headers_packagename
+Package: linux-headers-$debarch
+Provides: linux-headers-$packageversion-$debarch
 Architecture: $debarch
 Description: Linux kernel headers for $version on $debarch
  This package provides kernel header files for $version on $debarch
@@ -199,7 +193,8 @@ Description: Linux support headers for userspace development
  are used by the installed headers for GNU glibc and other system libraries.
 Multi-Arch: same
 
-Package: $dbg_packagename
+Package: linux-image-$debarch-dbg
+Provides: linux-image-$packageversion-$debarch-dbg
 Section: debug
 Architecture: $debarch
 Description: Linux kernel debugging symbols for $version

@@ -71,7 +71,7 @@ deploy_kernel_headers () {
 		fi
 	} > debian/hdrobjfiles
 
-	destdir=$pdir/usr/src/linux-headers-$version
+	destdir=$pdir/usr/src/$kernel_headers_packagename
 	mkdir -p $destdir
 	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir
 	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir
@@ -99,14 +99,16 @@ deploy_libc_headers () {
 	mv $pdir/usr/include/asm $pdir/usr/include/$host_arch/
 }
 
+debarch="$(cat debian/arch)"
 version=$KERNELRELEASE
 tmpdir=debian/linux-image
 dbg_dir=debian/linux-image-dbg
-packagename=linux-image-$version
+packagename=linux-image-$debarch
+kernel_headers_packagename=linux-headers-$debarch
 dbg_packagename=$packagename-dbg
 
 if [ "$ARCH" = "um" ] ; then
-	packagename=user-mode-linux-$version
+	packagename=user-mode-linux-$debarch
 fi
 
 # Not all arches have the same installed path in debian
@@ -203,7 +205,7 @@ done
 
 if [ "$ARCH" != "um" ]; then
 	deploy_kernel_headers debian/linux-headers
-	create_package linux-headers-$version debian/linux-headers
+	create_package "$kernel_headers_packagename" debian/linux-headers
 
 	deploy_libc_headers debian/linux-libc-dev
 	create_package linux-libc-dev debian/linux-libc-dev
