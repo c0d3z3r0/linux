@@ -164,6 +164,7 @@ superio_exit(int ioreg)
 #define NCT6683_REG_CUSTOMER_ID		0x602
 #define NCT6683_CUSTOMER_ID_INTEL	0x805
 #define NCT6683_CUSTOMER_ID_MITAC	0xa0e
+#define NCT6683_CUSTOMER_ID_LENOVO	0x0201
 
 #define NCT6683_REG_BUILD_YEAR		0x604
 #define NCT6683_REG_BUILD_MONTH		0x605
@@ -515,6 +516,19 @@ static void nct6683_write(struct nct6683_data *data, u16 reg, u16 value)
 	outb_p(reg >> 8, data->addr + EC_PAGE_REG);
 	outb_p(reg & 0xff, data->addr + EC_INDEX_REG);
 	outb_p(value & 0xff, data->addr + EC_DATA_REG);
+}
+
+static void nct6683_write16(struct nct6683_data *data, u16 reg, u16 value)
+{
+	nct6683_write(data, reg, value >> 8);
+	nct6683_write(data, reg + 1, value & 0xff);
+}
+
+static void nct6683_reg_debug(struct nct6683_data *data, u16 reg)
+{
+	u8 ret;
+	ret = nct6683_read(data, reg);
+	pr_info("Reg 0x%04x: 0x%02x\n", reg, ret);
 }
 
 static int get_in_reg(struct nct6683_data *data, int nr, int index)
@@ -931,15 +945,45 @@ store_pwm(struct device *dev, struct device_attribute *attr, const char *buf,
 
 	mutex_lock(&data->update_lock);
 	nct6683_write(data, NCT6683_REG_FAN_CFG_CTRL, NCT6683_FAN_CFG_REQ);
-	usleep_range(1000, 2000);
+	msleep(20);
+	nct6683_write(data, 0x0a7d, 0x00); // Lenovo unlock
+	nct6683_write(data, 0x09d0, 0x00);
+	nct6683_write(data, 0x0cfc, nct6683_read(data, 0x0cfc) | (1<<index));
+	nct6683_write(data, 0x0a00, nct6683_read(data, 0x0a00) | (1<<index));
+	nct6683_write(data, 0x0a08+index, 0x80);
+	nct6683_write16(data, NCT6683_REG_FAN_MIN(index), 0);
 	nct6683_write(data, NCT6683_REG_PWM_WRITE(index), val);
+	msleep(20);
 	nct6683_write(data, NCT6683_REG_FAN_CFG_CTRL, NCT6683_FAN_CFG_DONE);
+	msleep(20);
 	mutex_unlock(&data->update_lock);
 
 	return count;
 }
 
 SENSOR_TEMPLATE(pwm, "pwm%d", S_IRUGO, show_pwm, store_pwm, 0);
+
+static ssize_t
+debug_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct nct6683_data *data = dev_get_drvdata(dev);
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val) || val > 0xffff)
+		return -EINVAL;
+
+	nct6683_reg_debug(data, val);
+
+	return count;
+}
+
+static ssize_t
+debug_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static DEVICE_ATTR_RW(debug);
 
 static umode_t nct6683_pwm_is_visible(struct kobject *kobj,
 				      struct attribute *attr, int index)
@@ -952,10 +996,14 @@ static umode_t nct6683_pwm_is_visible(struct kobject *kobj,
 		return 0;
 
 	/* Only update pwm values for Mitac boards */
-	if (data->customer_id == NCT6683_CUSTOMER_ID_MITAC)
+	switch (data->customer_id) {
+	case NCT6683_CUSTOMER_ID_MITAC:
 		return attr->mode | S_IWUSR;
-
-	return attr->mode;
+	case NCT6683_CUSTOMER_ID_LENOVO:
+		return attr->mode | S_IWUSR;
+	default:
+		return attr->mode;
+	}
 }
 
 static struct sensor_device_template *nct6683_attributes_pwm_template[] = {
@@ -1100,6 +1148,7 @@ static DEVICE_ATTR_RW(beep_enable);
 static struct attribute *nct6683_attributes_other[] = {
 	&dev_attr_intrusion0_alarm.attr,
 	&dev_attr_beep_enable.attr,
+	&dev_attr_debug.attr,
 	NULL
 };
 
@@ -1217,6 +1266,8 @@ static int nct6683_probe(struct platform_device *pdev)
 	case NCT6683_CUSTOMER_ID_INTEL:
 		break;
 	case NCT6683_CUSTOMER_ID_MITAC:
+		break;
+	case NCT6683_CUSTOMER_ID_LENOVO:
 		break;
 	default:
 		if (!force)
