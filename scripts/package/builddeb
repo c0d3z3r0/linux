@@ -46,13 +46,14 @@ create_package() {
 	dpkg --build "$pdir" ..
 }
 
+debarch="$(cat debian/arch)"
 version=$KERNELRELEASE
 tmpdir="$objtree/debian/tmp"
 kernel_headers_dir="$objtree/debian/hdrtmp"
 libc_headers_dir="$objtree/debian/headertmp"
 dbg_dir="$objtree/debian/dbgtmp"
-packagename=linux-image-$version
-kernel_headers_packagename=linux-headers-$version
+packagename=linux-image-$debarch
+kernel_headers_packagename=linux-headers-$debarch
 libc_headers_packagename=linux-libc-dev
 dbg_packagename=$packagename-dbg
 
