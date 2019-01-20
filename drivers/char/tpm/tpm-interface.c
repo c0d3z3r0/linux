@@ -114,8 +114,10 @@ static int tpm_request_locality(struct tpm_chip *chip, unsigned int flags)
 		return 0;
 
 	rc = chip->ops->request_locality(chip, 0);
-	if (rc < 0)
+	if (rc < 0) {
+		dev_err(&chip->dev, "tpm_request_locality rc %d\n", rc);
 		return rc;
+	}
 
 	chip->locality = rc;
 
@@ -174,13 +176,16 @@ static ssize_t tpm_try_transmit(struct tpm_chip *chip,
 	bool need_locality;
 
 	rc = tpm_validate_command(chip, space, buf, bufsiz);
-	if (rc == -EINVAL)
+	if (rc == -EINVAL) {
+		dev_err(&chip->dev, "tpm_try_transmit EINVAL\n");
 		return rc;
+	}
 	/*
 	 * If the command is not implemented by the TPM, synthesize a
 	 * response with a TPM2_RC_COMMAND_CODE return for user-space.
 	 */
 	if (rc == -EOPNOTSUPP) {
+		dev_err(&chip->dev, "tpm_try_transmit EOPNOTSUP\n");
 		header->length = cpu_to_be32(sizeof(*header));
 		header->tag = cpu_to_be16(TPM2_ST_NO_SESSIONS);
 		header->return_code = cpu_to_be32(TPM2_RC_COMMAND_CODE |
@@ -193,8 +198,10 @@ static ssize_t tpm_try_transmit(struct tpm_chip *chip,
 
 	count = be32_to_cpu(*((__be32 *) (buf + 2)));
 	ordinal = be32_to_cpu(*((__be32 *) (buf + 6)));
-	if (count == 0)
+	if (count == 0) {
+		dev_err(&chip->dev, "tpm_try_transmit ENODATA\n");
 		return -ENODATA;
+	}
 	if (count > bufsiz) {
 		dev_err(&chip->dev,
 			"invalid count value %x %zx\n", count, bufsiz);
@@ -213,18 +220,23 @@ static ssize_t tpm_try_transmit(struct tpm_chip *chip,
 	if (need_locality) {
 		rc = tpm_request_locality(chip, flags);
 		if (rc < 0) {
+			dev_err(&chip->dev, "tpm_try_transmit loc rc %d\n", rc);
 			need_locality = false;
 			goto out_locality;
 		}
 	}
 
 	rc = tpm_cmd_ready(chip, flags);
-	if (rc)
+	if (rc){
+		dev_err(&chip->dev, "tpm_try_transmit ready rc %d\n",rc);
 		goto out_locality;
+	}
 
 	rc = tpm2_prepare_space(chip, space, ordinal, buf);
-	if (rc)
+	if (rc){
+		dev_err(&chip->dev, "tpm_try_transmit prep rc %d\n",rc);
 		goto out;
+	}
 
 	rc = chip->ops->send(chip, buf, count);
 	if (rc < 0) {
@@ -339,8 +351,10 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 
 	for (;;) {
 		ret = tpm_try_transmit(chip, space, buf, bufsiz, flags);
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(&chip->dev, "TPM transmit ret: %ld\n", ret);
 			break;
+		}
 		rc = be32_to_cpu(header->return_code);
 		if (rc != TPM2_RC_RETRY && rc != TPM2_RC_TESTING)
 			break;
@@ -348,8 +362,10 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 		 * return immediately if self test returns test
 		 * still running to shorten boot time.
 		 */
-		if (rc == TPM2_RC_TESTING && cc == TPM2_CC_SELF_TEST)
+		if (rc == TPM2_RC_TESTING && cc == TPM2_CC_SELF_TEST) {
+			dev_err(&chip->dev, "TPM transmit selftest return\n");
 			break;
+		}
 
 		if (delay_msec > TPM2_DURATION_LONG) {
 			if (rc == TPM2_RC_RETRY)
@@ -392,8 +408,10 @@ ssize_t tpm_transmit_cmd(struct tpm_chip *chip, struct tpm_space *space,
 	ssize_t len;
 
 	len = tpm_transmit(chip, space, buf, bufsiz, flags);
-	if (len <  0)
+	if (len <  0) {
+		dev_err(&chip->dev, "TPM tpm_transmit_cmd rc %d\n", len);
 		return len;
+	}
 
 	err = be32_to_cpu(header->return_code);
 	if (err != 0 && err != TPM_ERR_DISABLED && err != TPM_ERR_DEACTIVATED

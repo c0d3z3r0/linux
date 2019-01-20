@@ -121,8 +121,10 @@ static int check_acpi_tpm2(struct device *dev)
 	}
 
 	/* The tpm2_crb driver handles this device */
-	if (tbl->start_method != ACPI_TPM2_MEMORY_MAPPED)
+	if (tbl->start_method != ACPI_TPM2_MEMORY_MAPPED) {
+		dev_err(dev, "TPM TIS ACPI: not memmapped\n");
 		return -ENODEV;
+	}
 
 	return 0;
 }
@@ -214,8 +216,17 @@ static int tpm_tis_init(struct device *dev, struct tpm_info *tpm_info)
 	if (itpm || is_itpm(ACPI_COMPANION(dev)))
 		phy->priv.flags |= TPM_TIS_ITPM_WORKAROUND;
 
-	return tpm_tis_core_init(dev, &phy->priv, irq, &tpm_tcg,
-				 ACPI_HANDLE(dev));
+	int count=0;
+	do {
+		rc = tpm_tis_core_init(dev, &phy->priv, irq, &tpm_tcg,
+				       ACPI_HANDLE(dev));
+		if (rc<0) {
+			dev_err(dev, "TPM TIS: try %d, rc: %d\n", count, rc);
+			msleep(200);
+		}
+	} while (rc<0 && count++ < 5);
+
+	return rc;
 }
 
 static SIMPLE_DEV_PM_OPS(tpm_tis_pm, tpm_pm_suspend, tpm_tis_resume);
@@ -227,8 +238,10 @@ static int tpm_tis_pnp_init(struct pnp_dev *pnp_dev,
 	struct resource *res;
 
 	res = pnp_get_resource(pnp_dev, IORESOURCE_MEM, 0);
-	if (!res)
+	if (!res) {
+		dev_err(&pnp_dev->dev, "TPM TIS: pnp err\n");
 		return -ENODEV;
+	}
 	tpm_info.res = *res;
 
 	if (pnp_irq_valid(pnp_dev, 0))

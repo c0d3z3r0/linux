@@ -102,20 +102,28 @@ again:
 static int wait_startup(struct tpm_chip *chip, int l)
 {
 	struct tpm_tis_data *priv = dev_get_drvdata(&chip->dev);
-	unsigned long stop = jiffies + chip->timeout_a;
+	//unsigned long stop = jiffies + chip->timeout_a;
+	unsigned long stop = jiffies + chip->timeout_a + msecs_to_jiffies(1000);
+
+	//dev_info(&chip->dev, "TIS CORE: wait_startup start\n");
 
 	do {
 		int rc;
 		u8 access;
 
 		rc = tpm_tis_read8(priv, TPM_ACCESS(l), &access);
-		if (rc < 0)
+		if (rc < 0) {
+			dev_err(&chip->dev, "TPM TIS CORE: wait_startup read error\n");
 			return rc;
+
+		}
 
 		if (access & TPM_ACCESS_VALID)
 			return 0;
+
 		tpm_msleep(TPM_TIMEOUT);
 	} while (time_before(jiffies, stop));
+	dev_err(&chip->dev, "TPM TIS CORE: wait_startup timeout\n");
 	return -1;
 }
 
@@ -126,15 +134,23 @@ static bool check_locality(struct tpm_chip *chip, int l)
 	u8 access;
 
 	rc = tpm_tis_read8(priv, TPM_ACCESS(l), &access);
-	if (rc < 0)
-		return false;
+	if (rc < 0) {
+		dev_err(&chip->dev, "TPM TIS CORE: check_locality rc %d\n", rc);
+		rc = tpm_tis_read8(priv, TPM_ACCESS(l), &access);
+		if (rc < 0) {
+			dev_err(&chip->dev, "TPM TIS CORE: check_locality retry rc %d\n", rc);
+			return false;
+		}
+	}
 
 	if ((access & (TPM_ACCESS_ACTIVE_LOCALITY | TPM_ACCESS_VALID)) ==
 	    (TPM_ACCESS_ACTIVE_LOCALITY | TPM_ACCESS_VALID)) {
 		priv->locality = l;
+		dev_err(&chip->dev, "TPM TIS CORE: check_locality return true l %d\n", l);
 		return true;
 	}
 
+	dev_err(&chip->dev, "TPM TIS CORE: check_locality return false l %d\n", l);
 	return false;
 }
 
@@ -198,24 +214,31 @@ static int request_locality(struct tpm_chip *chip, int l)
 	unsigned long stop, timeout;
 	long rc;
 
-	if (check_locality(chip, l))
+	if (check_locality(chip, l)) {
+		dev_err(&chip->dev, "TPM TIS CORE: request_locality first check ok l %d\n", l);
 		return l;
+	}
 
 	rc = tpm_tis_write8(priv, TPM_ACCESS(l), TPM_ACCESS_REQUEST_USE);
-	if (rc < 0)
+	if (rc < 0) {
+		dev_err(&chip->dev, "TPM TIS CORE: request_locality write rc %ld\n", rc);
 		return rc;
+	}
 
-	stop = jiffies + chip->timeout_a;
+	stop = jiffies + chip->timeout_a*4;
 
 	if (chip->flags & TPM_CHIP_FLAG_IRQ) {
 again:
 		timeout = stop - jiffies;
-		if ((long)timeout <= 0)
+		if ((long)timeout <= 0) {
+			dev_err(&chip->dev, "TPM TIS CORE: request_locality timeout 1\n");
 			return -1;
+		}
 		rc = wait_event_interruptible_timeout(priv->int_queue,
 						      (check_locality
 						       (chip, l)),
 						      timeout);
+		dev_err(&chip->dev, "TPM TIS CORE: request_locality check rc %ld l %d\n", rc, l);
 		if (rc > 0)
 			return l;
 		if (rc == -ERESTARTSYS && freezing(current)) {
@@ -225,10 +248,13 @@ again:
 	} else {
 		/* wait for burstcount */
 		do {
-			if (check_locality(chip, l))
+			rc = check_locality(chip, l);
+			dev_err(&chip->dev, "TPM TIS CORE: request_locality check rc %ld l %d\n", rc, l);
+			if (rc > 0)
 				return l;
-			tpm_msleep(TPM_TIMEOUT);
+			tpm_msleep(TPM_TIMEOUT*4);
 		} while (time_before(jiffies, stop));
+		dev_err(&chip->dev, "TPM TIS CORE: request_locality timeout 2\n");
 	}
 	return -1;
 }
@@ -240,8 +266,14 @@ static u8 tpm_tis_status(struct tpm_chip *chip)
 	u8 status;
 
 	rc = tpm_tis_read8(priv, TPM_STS(priv->locality), &status);
-	if (rc < 0)
-		return 0;
+	if (rc < 0) {
+		dev_err(&chip->dev, "TPM TIS CORE: tpm_tis_status rc %d\n", rc);
+		rc = tpm_tis_read8(priv, TPM_STS(priv->locality), &status);
+		if (rc < 0) {
+			dev_err(&chip->dev, "TPM TIS CORE: tpm_tis_status retry rc %d\n", rc);
+			return 0;
+		}
+	}
 
 	return status;
 }
@@ -438,8 +470,10 @@ static void disable_interrupts(struct tpm_chip *chip)
 	int rc;
 
 	rc = tpm_tis_read32(priv, TPM_INT_ENABLE(priv->locality), &intmask);
-	if (rc < 0)
+	if (rc < 0) {
+		dev_err(&chip->dev, "TPM TIS CORE: intmask rc %d\n", rc);
 		intmask = 0;
+	}
 
 	intmask &= ~TPM_GLOBAL_INT_ENABLE;
 	rc = tpm_tis_write32(priv, TPM_INT_ENABLE(priv->locality), intmask);
@@ -504,8 +538,10 @@ static int tpm_tis_send(struct tpm_chip *chip, u8 *buf, size_t len)
 	chip->flags |= TPM_CHIP_FLAG_IRQ;
 	if (!priv->irq_tested)
 		tpm_msleep(1);
-	if (!priv->irq_tested)
+	if (!priv->irq_tested) {
+		dev_err(&chip->dev, "TPM TIS CORE: disabling interrupts\n");
 		disable_interrupts(chip);
+	}
 	priv->irq_tested = true;
 	return rc;
 }
@@ -899,6 +935,7 @@ int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 		chip->ops->clk_enable(chip, true);
 
 	if (wait_startup(chip, 0) != 0) {
+		dev_err(dev, "TPM TIS CORE: wait_startup ENODEV\n");
 		rc = -ENODEV;
 		goto out_err;
 	}
@@ -933,6 +970,7 @@ int tpm_tis_core_init(struct device *dev, struct tpm_tis_data *priv, int irq,
 
 	probe = probe_itpm(chip);
 	if (probe < 0) {
+		dev_err(dev, "TPM TIS CORE: probe_itpm ENODEV\n");
 		rc = -ENODEV;
 		goto out_err;
 	}

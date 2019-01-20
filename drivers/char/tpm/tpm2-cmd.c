@@ -186,8 +186,10 @@ int tpm2_pcr_read(struct tpm_chip *chip, u32 pcr_idx, u8 *res_buf)
 		return -EINVAL;
 
 	rc = tpm_buf_init(&buf, TPM2_ST_NO_SESSIONS, TPM2_CC_PCR_READ);
-	if (rc)
+	if (rc) {
+		dev_err(&chip->dev, "TPM tpm2_pcr_read buf rc %d\n", rc);
 		return rc;
+	}
 
 	pcr_select[pcr_idx >> 3] = 1 << (pcr_idx & 0x7);
 
@@ -199,6 +201,7 @@ int tpm2_pcr_read(struct tpm_chip *chip, u32 pcr_idx, u8 *res_buf)
 
 	rc = tpm_transmit_cmd(chip, NULL, buf.data, PAGE_SIZE, 0, 0,
 			res_buf ? "attempting to read a pcr value" : NULL);
+	dev_err(&chip->dev, "TPM tpm2_pcr_read trans rc %d\n", rc);
 	if (rc == 0 && res_buf) {
 		out = (struct tpm2_pcr_read_out *)&buf.data[TPM_HEADER_SIZE];
 		memcpy(res_buf, out->digest, SHA1_DIGEST_SIZE);
