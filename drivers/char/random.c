@@ -2287,6 +2287,9 @@ void add_hwgenerator_randomness(const char *buffer, size_t count,
 		return;
 	}
 
+	if (!entropy)
+		return;
+
 	/* Suspend writing if we're above the trickle threshold.
 	 * We'll be woken up again once below random_write_wakeup_thresh,
 	 * or when the calling thread is about to terminate.
