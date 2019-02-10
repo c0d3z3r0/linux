@@ -8019,6 +8019,7 @@ enum {					/* Fan control constants */
 					 * 0x84 must be read before 0x85 */
 	fan_select_offset = 0x31,	/* EC register 0x31 (Firmware 7M)
 					   bit 0 selects which fan is active */
+	fan_pwm_offset = 0x8f,
 
 	TP_EC_FAN_FULLSPEED = 0x40,	/* EC fan mode: full speed */
 	TP_EC_FAN_AUTO	    = 0x80,	/* EC fan mode: auto fan control */
@@ -8044,6 +8045,7 @@ enum fan_control_commands {
 	TPACPI_FAN_CMD_LEVEL 	= 0x0002,	/* level command  */
 	TPACPI_FAN_CMD_ENABLE	= 0x0004,	/* enable/disable cmd,
 						 * and also watchdog cmd */
+	TPACPI_FAN_CMD_PWM 		= 0x0008,	/* pwm command  */
 };
 
 static bool fan_control_allowed;
@@ -8215,6 +8217,34 @@ static int fan_get_status_safe(u8 *status)
 	return 0;
 }
 
+static int fan_get_pwm(u8 *pwm)
+{
+	int rc = 0;
+	u8 p;
+
+	if (mutex_lock_killable(&fan_mutex))
+		return -ERESTARTSYS;
+
+	switch (fan_status_access_mode) {
+	case TPACPI_FAN_RD_TPEC:
+		if (unlikely(!acpi_ec_read(fan_pwm_offset, &p)))
+			rc = -EIO;
+		break;
+
+	default:
+		rc = -ENXIO;
+	}
+
+	mutex_unlock(&fan_mutex);
+
+	if (unlikely(rc))
+		return rc;
+	if (likely(pwm))
+		*pwm = p;
+
+	return 0;
+}
+
 static int fan_get_speed(unsigned int *speed)
 {
 	u8 hi, lo;
@@ -8270,50 +8300,7 @@ static int fan2_get_speed(unsigned int *speed)
 
 static int fan_set_level(int level)
 {
-	if (!fan_control_allowed)
-		return -EPERM;
-
-	switch (fan_control_access_mode) {
-	case TPACPI_FAN_WR_ACPI_SFAN:
-		if (level >= 0 && level <= 7) {
-			if (!acpi_evalf(sfan_handle, NULL, NULL, "vd", level))
-				return -EIO;
-		} else
-			return -EINVAL;
-		break;
-
-	case TPACPI_FAN_WR_ACPI_FANS:
-	case TPACPI_FAN_WR_TPEC:
-		if (!(level & TP_EC_FAN_AUTO) &&
-		    !(level & TP_EC_FAN_FULLSPEED) &&
-		    ((level < 0) || (level > 7)))
-			return -EINVAL;
-
-		/* safety net should the EC not support AUTO
-		 * or FULLSPEED mode bits and just ignore them */
-		if (level & TP_EC_FAN_FULLSPEED)
-			level |= 7;	/* safety min speed 7 */
-		else if (level & TP_EC_FAN_AUTO)
-			level |= 4;	/* safety min speed 4 */
-
-		if (!acpi_ec_write(fan_status_offset, level))
-			return -EIO;
-		else
-			tp_features.fan_ctrl_status_undef = 0;
-		break;
-
-	default:
-		return -ENXIO;
-	}
-
-	vdbg_printk(TPACPI_DBG_FAN,
-		"fan control: set fan control register to 0x%02x\n", level);
-	return 0;
-}
-
-static int fan_set_level_safe(int level)
-{
-	int rc;
+	int rc = 0;
 
 	if (!fan_control_allowed)
 		return -EPERM;
@@ -8324,11 +8311,50 @@ static int fan_set_level_safe(int level)
 	if (level == TPACPI_FAN_LAST_LEVEL)
 		level = fan_control_desired_level;
 
-	rc = fan_set_level(level);
+	switch (fan_control_access_mode) {
+	case TPACPI_FAN_WR_ACPI_SFAN:
+		if (level >= 0 && level <= 7) {
+			if (!acpi_evalf(sfan_handle, NULL, NULL, "vd", level))
+				rc = -EIO;
+		} else
+			rc = -EINVAL;
+		break;
+
+	case TPACPI_FAN_WR_ACPI_FANS:
+	case TPACPI_FAN_WR_TPEC:
+		if (!(level & TP_EC_FAN_AUTO) &&
+		    !(level & TP_EC_FAN_FULLSPEED) &&
+		    ((level < 0) || (level > 7))) {
+			rc = -EINVAL;
+			break;
+		}
+
+		/* safety net should the EC not support AUTO
+		 * or FULLSPEED mode bits and just ignore them */
+		if (level & TP_EC_FAN_FULLSPEED)
+			level |= 7;	/* safety min speed 7 */
+		else if (level & TP_EC_FAN_AUTO)
+			level |= 4;	/* safety min speed 4 */
+
+		if (!acpi_ec_write(fan_status_offset, level) ||
+				!acpi_ec_write(fan_pwm_offset, 0)) /*disable pwm */
+			rc = -EIO;
+		else
+			tp_features.fan_ctrl_status_undef = 0;
+		break;
+
+	default:
+		rc = -ENXIO;
+	}
+
 	if (!rc)
 		fan_update_desired_level(level);
 
 	mutex_unlock(&fan_mutex);
+
+	if (!rc)
+		vdbg_printk(TPACPI_DBG_FAN,
+			"fan control: set fan control register to 0x%02x\n", level);
 	return rc;
 }
 
@@ -8463,6 +8489,49 @@ static int fan_set_speed(int speed)
 	return rc;
 }
 
+static int fan_set_pwm(int pwm)
+{
+	if (!fan_control_allowed)
+		return -EPERM;
+
+	switch (fan_control_access_mode) {
+	case TPACPI_FAN_WR_ACPI_FANS:
+	case TPACPI_FAN_WR_TPEC:
+		if ( pwm < 0 || pwm > 255)
+			return -EINVAL;
+
+		if (!acpi_ec_write(fan_status_offset, 0x00) || /* disable regular control */
+				!acpi_ec_write(fan_pwm_offset, 0x01) || /* seems to be required...  */
+				!acpi_ec_write(fan_pwm_offset, pwm))
+			return -EIO;
+
+		break;
+
+	default:
+		return -ENXIO;
+	}
+
+	vdbg_printk(TPACPI_DBG_FAN,
+		"fan control: set fan pwm register to 0x%02x\n", pwm);
+	return 0;
+}
+
+static int fan_set_pwm_safe(int pwm)
+{
+	int rc;
+
+	if (!fan_control_allowed)
+		return -EPERM;
+
+	if (mutex_lock_killable(&fan_mutex))
+		return -ERESTARTSYS;
+
+	rc = fan_set_pwm(pwm);
+
+	mutex_unlock(&fan_mutex);
+	return rc;
+}
+
 static void fan_watchdog_reset(void)
 {
 	if (fan_control_access_mode == TPACPI_FAN_WR_NONE)
@@ -8566,7 +8635,7 @@ static ssize_t fan_pwm1_enable_store(struct device *dev,
 		return -EINVAL;
 	}
 
-	res = fan_set_level_safe(level);
+	res = fan_set_level(level);
 	if (res == -ENXIO)
 		return -EINVAL;
 	else if (res < 0)
@@ -8586,52 +8655,36 @@ static ssize_t fan_pwm1_show(struct device *dev,
 			     char *buf)
 {
 	int res;
-	u8 status;
+	u8 pwm;
 
-	res = fan_get_status_safe(&status);
+	res = fan_get_pwm(&pwm);
 	if (res)
 		return res;
 
-	if ((status &
-	     (TP_EC_FAN_AUTO | TP_EC_FAN_FULLSPEED)) != 0)
-		status = fan_control_desired_level;
-
-	if (status > 7)
-		status = 7;
-
-	return snprintf(buf, PAGE_SIZE, "%u\n", (status * 255) / 7);
+	return snprintf(buf, PAGE_SIZE, "%u\n", pwm);
 }
 
 static ssize_t fan_pwm1_store(struct device *dev,
 			      struct device_attribute *attr,
 			      const char *buf, size_t count)
 {
-	unsigned long s;
 	int rc;
-	u8 status, newlevel;
+	u8 pwm;
 
-	if (parse_strtoul(buf, 255, &s))
+	if (kstrtou8(buf, 0, &pwm))
 		return -EINVAL;
 
 	tpacpi_disclose_usertask("hwmon pwm1",
-			"set fan speed to %lu\n", s);
-
-	/* scale down from 0-255 to 0-7 */
-	newlevel = (s >> 5) & 0x07;
+			"set fan speed to %d\n", pwm);
 
 	if (mutex_lock_killable(&fan_mutex))
 		return -ERESTARTSYS;
 
-	rc = fan_get_status(&status);
-	if (!rc && (status &
-		    (TP_EC_FAN_AUTO | TP_EC_FAN_FULLSPEED)) == 0) {
-		rc = fan_set_level(newlevel);
-		if (rc == -ENXIO)
-			rc = -EINVAL;
-		else if (!rc) {
-			fan_update_desired_level(newlevel);
-			fan_watchdog_reset();
-		}
+	rc = fan_set_pwm(pwm);
+	if (rc == -ENXIO)
+		rc = -EINVAL;
+	else if (!rc) {
+		fan_watchdog_reset();
 	}
 
 	mutex_unlock(&fan_mutex);
@@ -8794,7 +8847,8 @@ static int __init fan_init(struct ibm_init_struct *iibm)
 				fan_control_access_mode = TPACPI_FAN_WR_TPEC;
 				fan_control_commands |=
 				    TPACPI_FAN_CMD_LEVEL |
-				    TPACPI_FAN_CMD_ENABLE;
+				    TPACPI_FAN_CMD_ENABLE |
+						TPACPI_FAN_CMD_PWM;
 			}
 		}
 	}
@@ -8924,7 +8978,7 @@ static void fan_resume(void)
 	if (do_set) {
 		pr_notice("restoring fan level to 0x%02x\n",
 			  fan_control_resume_level);
-		rc = fan_set_level_safe(fan_control_resume_level);
+		rc = fan_set_level(fan_control_resume_level);
 		if (rc < 0)
 			pr_notice("failed to restore fan level: %d\n", rc);
 	}
@@ -8986,7 +9040,7 @@ static int fan_read(struct seq_file *m)
 			break;
 
 		default:
-			seq_printf(m, " (<level> is 0-7, auto, disengaged, full-speed)\n");
+			seq_printf(m, " (<level> is 0-7, auto, disengaged, full-speed, pwm)\n");
 			break;
 		}
 	}
@@ -8997,6 +9051,11 @@ static int fan_read(struct seq_file *m)
 
 	if (fan_control_commands & TPACPI_FAN_CMD_SPEED)
 		seq_printf(m, "commands:\tspeed <speed> (<speed> is 0-65535)\n");
+
+	if (fan_control_commands & TPACPI_FAN_CMD_PWM) {
+		seq_printf(m, "commands:\tpwm <pwm>");
+		seq_printf(m, " (<pwm> is 0-255)\n");
+	}
 
 	return 0;
 }
@@ -9013,7 +9072,7 @@ static int fan_write_cmd_level(const char *cmd, int *rc)
 	else if (sscanf(cmd, "level %d", &level) != 1)
 		return 0;
 
-	*rc = fan_set_level_safe(level);
+	*rc = fan_set_level(level);
 	if (*rc == -ENXIO)
 		pr_err("level command accepted for unsupported access mode %d\n",
 		       fan_control_access_mode);
@@ -9050,6 +9109,24 @@ static int fan_write_cmd_disable(const char *cmd, int *rc)
 		       fan_control_access_mode);
 	else if (!*rc)
 		tpacpi_disclose_usertask("procfs fan", "disable\n");
+
+	return 1;
+}
+
+static int fan_write_cmd_pwm(const char *cmd, int *rc)
+{
+	int pwm;
+
+	if (sscanf(cmd, "pwm %d", &pwm) != 1)
+		return 0;
+
+	*rc = fan_set_pwm_safe(pwm);
+	if (*rc == -ENXIO)
+		pr_err("pwm command accepted for unsupported access mode %d\n",
+		       fan_control_access_mode);
+	else if (!*rc)
+		tpacpi_disclose_usertask("procfs fan",
+			"set pwm to %d\n", pwm);
 
 	return 1;
 }
@@ -9107,7 +9184,9 @@ static int fan_write(char *buf)
 		       fan_write_cmd_disable(cmd, &rc) ||
 		       fan_write_cmd_watchdog(cmd, &rc))) &&
 		    !((fan_control_commands & TPACPI_FAN_CMD_SPEED) &&
-		      fan_write_cmd_speed(cmd, &rc))
+		      fan_write_cmd_speed(cmd, &rc)) &&
+				!((fan_control_commands & TPACPI_FAN_CMD_PWM) &&
+		      fan_write_cmd_pwm(cmd, &rc))
 		    )
 			rc = -EINVAL;
 		else if (!rc)
