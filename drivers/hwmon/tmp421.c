@@ -89,9 +89,11 @@ MODULE_DEVICE_TABLE(of, tmp421_of_match);
 struct tmp421_data {
 	struct i2c_client *client;
 	struct mutex update_lock;
+	u32 chip_config[2];
 	u32 temp_config[5];
+	struct hwmon_channel_info chip_info;
 	struct hwmon_channel_info temp_info;
-	const struct hwmon_channel_info *info[2];
+	const struct hwmon_channel_info *info[3];
 	struct hwmon_chip_info chip;
 	char valid;
 	unsigned long last_updated;
@@ -302,13 +304,19 @@ static int tmp421_probe(struct i2c_client *client,
 	if (err)
 		return err;
 
+	data->chip_config[0] = HWMON_C_REGISTER_TZ;
+
 	for (i = 0; i < data->channels; i++)
 		data->temp_config[i] = HWMON_T_INPUT | HWMON_T_FAULT;
 
 	data->chip.ops = &tmp421_ops;
 	data->chip.info = data->info;
 
-	data->info[0] = &data->temp_info;
+	data->info[0] = &data->chip_info;
+	data->info[1] = &data->temp_info;
+
+	data->chip_info.type = hwmon_chip;
+	data->chip_info.config = data->chip_config;
 
 	data->temp_info.type = hwmon_temp;
 	data->temp_info.config = data->temp_config;
