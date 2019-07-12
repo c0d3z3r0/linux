@@ -86,12 +86,14 @@ set_debarch() {
 
 # Some variables and settings used throughout the script
 version=$KERNELRELEASE
+commit=g$(git rev-parse --short HEAD)
+
 if [ -n "$KDEB_PKGVERSION" ]; then
 	packageversion=$KDEB_PKGVERSION
 	revision=${packageversion##*-}
 else
 	revision=$(cat .version 2>/dev/null||echo 1)
-	packageversion=$version-$revision
+	packageversion=$(echo $version | sed 's/-rc/~rc/g')~$commit-$revision
 fi
 debarch=
 set_debarch
@@ -170,14 +172,14 @@ Build-Depends: bc, rsync, kmod, cpio, bison, flex | flex:native $extra_build_dep
 Homepage: http://www.kernel.org/
 
 Package: linux-image-$debarch
-Provides: linux-image-$packageversion-$debarch
+Provides: linux-image-$version-$debarch
 Architecture: $debarch
 Description: Linux kernel, version $version
  This package contains the Linux kernel, modules and corresponding other
  files, version: $version.
 
 Package: linux-headers-$debarch
-Provides: linux-headers-$packageversion-$debarch
+Provides: linux-headers-$version-$debarch
 Architecture: $debarch
 Description: Linux kernel headers for $version on $debarch
  This package provides kernel header files for $version on $debarch
@@ -194,7 +196,7 @@ Description: Linux support headers for userspace development
 Multi-Arch: same
 
 Package: linux-image-$debarch-dbg
-Provides: linux-image-$packageversion-$debarch-dbg
+Provides: linux-image-$version-$debarch-dbg
 Section: debug
 Architecture: $debarch
 Description: Linux kernel debugging symbols for $version
