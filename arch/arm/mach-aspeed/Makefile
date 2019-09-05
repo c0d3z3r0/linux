@@ -3,3 +3,5 @@
 # Copyright IBM Corp.
 
 obj-$(CONFIG_SMP) += platsmp.o
+
+obj-y := aspeed_soc.o
