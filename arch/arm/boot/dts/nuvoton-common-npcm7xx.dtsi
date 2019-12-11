@@ -371,6 +371,13 @@
 				status = "disabled";
 			};
 
+			peci: bus@100000 {
+				compatible = "simple-bus";
+				#address-cells = <1>;
+				#size-cells = <1>;
+				ranges = <0x0 0x100000 0x200>;
+			};
+
 			timer0: timer@8000 {
 				compatible = "nuvoton,npcm750-timer";
 				interrupts = <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>;
@@ -1245,5 +1252,17 @@
 			groups = "hgpio7";
 			function = "hgpio7";
 		};
+	};
+};
+
+&peci {
+	peci0: peci-bus@0 {
+		compatible = "nuvoton,npcm750-peci";
+		reg = <0x0 0x200>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&clk NPCM7XX_CLK_APB3>;
+		status = "disabled";
 	};
 };
