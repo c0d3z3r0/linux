@@ -163,3 +163,7 @@
 		aspeed,fan-tach-ch = /bits/ 8 <0x01>;
 	};
 };
+
+&rtc {
+	status = "okay";
+};

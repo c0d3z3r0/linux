@@ -1,0 +1,347 @@
+// SPDX-License-Identifier: GPL-2.0+
+/dts-v1/;
+
+#include "aspeed-g4.dtsi"
+#include <dt-bindings/gpio/aspeed-gpio.h>
+
+/ {
+	model = "Supermicro X11SSM-F BMC";
+	compatible = "supermicro,x11ssmf-bmc", "aspeed,ast2400";
+
+	chosen {
+		stdout-path = &uart5;
+		//bootargs = "console=ttyS4,115200 earlyprintk";
+	};
+
+	memory@40000000 {
+		/* 128 MiB DDR3 memory */
+		reg = <0x40000000 0x08000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		vga_memory: framebuffer@47000000 {
+			no-map;
+			reg = <0x47000000 0x01000000>; /* 16MB */
+		};
+
+		flash_memory: region@98000000 {
+			no-map;
+			reg = <0x98000000 0x01000000>; /* 16MB */
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		uid {
+			gpios = <&gpio ASPEED_GPIO(D, 6) GPIO_ACTIVE_HIGH>;
+		};
+
+		heartbeat {
+			gpios = <&gpio ASPEED_GPIO(D, 7) GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		power {
+			label = "power";
+			gpios = <&gpio ASPEED_GPIO(C, 1) GPIO_ACTIVE_LOW>;
+			linux,code = <ASPEED_GPIO(C, 1)>;
+		};
+
+		reset {
+			label = "reset";
+			gpios = <&gpio ASPEED_GPIO(E, 2) GPIO_ACTIVE_LOW>;
+			linux,code = <ASPEED_GPIO(E, 2)>;
+		};
+	};
+/*
+	iio-hwmon {
+		compatible = "iio-hwmon";
+		io-channels = <&adc 0>, <&adc 1>, <&adc 2>, <&adc 3>,
+			      <&adc 4>, <&adc 5>, <&adc 6>, <&adc 7>,
+			      <&adc 8>, <&adc 9>, <&adc 10>, <&adc 11>,
+			      <&adc 12>, <&adc 13>, <&adc 14>, <&adc 15>;
+	};
+*/
+};
+
+&wdt1 {
+	status = "okay";
+	aspeed,reset-type = "system";
+};
+
+&wdt2 {
+	status = "okay";
+	aspeed,reset-type = "system";
+};
+
+&pinctrl {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_flbusy_default &pinctrl_flwp_default
+		     &pinctrl_vgahs_default &pinctrl_vgavs_default
+		     &pinctrl_ddcclk_default &pinctrl_ddcdat_default>;
+};
+
+&fmc {
+	status = "okay";
+	flash@0 {
+		status = "okay";
+		m25p,fast-read;
+		label = "bmc";
+#include "openbmc-flash-layout.dtsi"
+	};
+};
+
+&spi {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_spi1_default>;
+	flash@0 {
+		status = "okay";
+		m25p,fast-read;
+		label = "pnor";
+	};
+};
+
+&gpio {
+/*
+	pin_gpio_e4 {
+		gpios = <&gpio ASPEED_GPIO(E, 4) GPIO_ACTIVE_LOW>;
+		output-low;
+		line-name = "bios_mux";
+	};
+
+	pin_gpio_e6 {
+		gpios = <&gpio ASPEED_GPIO(E, 6) GPIO_ACTIVE_LOW>;
+		output-high;
+		line-name = "rtl8211e_phyrst";
+	};
+*/
+};
+
+&i2c0 {
+	status = "okay";
+
+	/* MPS MP2955 */
+	mp2955@20 {
+		compatible = "pmbus"; /* no specific driver available */
+		reg = <0x20>;
+	};
+};
+
+/*
+&i2c1 {
+	status = "okay";
+};
+*/
+
+&i2c2 {
+	status = "okay";
+
+	/* DDR TEMP */
+	jc42@18 {
+		compatible = "jedec,jc-42.4-temp";
+		reg = <0x18>;
+	};
+
+	/* DDR TEMP */
+	jc42@19 {
+		compatible = "jedec,jc-42.4-temp";
+		reg = <0x19>;
+	};
+
+	/* DDR TEMP */
+	jc42@1a {
+		compatible = "jedec,jc-42.4-temp";
+		reg = <0x1a>;
+	};
+
+	/* DDR TEMP */
+	jc42@1b {
+		compatible = "jedec,jc-42.4-temp";
+		reg = <0x1b>;
+	};
+
+	/* SPD EEPROM */
+	ee1004@50 {
+		compatible = "ee1004";
+		reg = <0x50>;
+	};
+
+	/* SPD EEPROM */
+	ee1004@51 {
+		compatible = "ee1004";
+		reg = <0x51>;
+	};
+
+	/* SPD EEPROM */
+	ee1004@52 {
+		compatible = "ee1004";
+		reg = <0x52>;
+	};
+
+	/* SPD EEPROM */
+	ee1004@53 {
+		compatible = "ee1004";
+		reg = <0x53>;
+	};
+};
+
+/*
+&i2c3 {
+	status = "okay";
+};
+
+&i2c4 {
+	status = "okay";
+};
+
+&i2c5 {
+	status = "okay";
+};
+
+&i2c6 {
+	status = "okay";
+};
+*/
+
+&i2c7 {
+	status = "okay";
+
+	/* Nuvoton W83773G */
+	w83773g@4c {
+		compatible = "nuvoton,w83773g";
+		reg = <0x4c>;
+	};
+};
+
+/*
+&i2c13 {
+	status = "okay";
+};
+*/
+
+/*
+&adc {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_adc0_default
+		     &pinctrl_adc1_default
+		     &pinctrl_adc2_default
+		     &pinctrl_adc3_default
+		     &pinctrl_adc4_default
+		     &pinctrl_adc5_default
+		     &pinctrl_adc6_default
+		     &pinctrl_adc7_default
+		     &pinctrl_adc8_default
+		     &pinctrl_adc9_default
+		     &pinctrl_adc10_default
+		     &pinctrl_adc11_default
+		     &pinctrl_adc12_default
+		     &pinctrl_adc13_default
+		     &pinctrl_adc14_default
+		     &pinctrl_adc15_default>;
+};
+*/
+
+&mac0 {
+	status = "okay";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_rmii1_default>;
+
+	use-ncsi;
+};
+
+/*
+TODO: PHY is constantly resetting
+&mac1 {
+	status = "okay";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_rgmii2_default &pinctrl_mdio2_default>;
+
+	//reset-gpios = <&gpio ASPEED_GPIO(E, 6) GPIO_ACTIVE_HIGH>;
+};
+*/
+
+/* ttyS0 / COM A */
+&uart1 {
+	status = "okay";
+};
+
+/* ttyS1 / COM B */
+&uart2 {
+	status = "okay";
+};
+
+/* BMC console UART */
+&uart5 {
+	status = "okay";
+};
+
+&vuart {
+    status = "okay";
+};
+
+&lpc_ctrl {
+	status = "okay";
+	memory-region = <&flash_memory>;
+	flash = <&spi>;
+};
+
+&lpc_snoop {
+    status = "okay";
+    snoop-ports = <0x80 0x81>;
+};
+
+&vhub {
+	status = "okay";
+};
+
+&pwm_tacho {
+//todo: add appropriate cooling map
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_pwm0_default
+		     &pinctrl_pwm1_default>;
+
+	// FAN 1-4
+	fan@0 {
+		reg = <0x00>;
+		aspeed,fan-tach-ch = /bits/ 8 <0x00 0x01 0x02 0x03>;
+	};
+
+	// FAN A
+	fan@1 {
+		reg = <0x01>;
+		aspeed,fan-tach-ch = /bits/ 8 <0x06>;
+	};
+};
+
+&ibt {
+	status = "okay";
+};
+
+/*
+&peci0 {
+	status = "okay";
+
+	intel-peci-client@30 {
+		compatible = "intel,peci-client";
+		reg = <0x30>;
+		status = "okay";
+	};
+};
+*/
+
+&rtc {
+	status = "okay";
+};

@@ -535,7 +535,7 @@ static int aspeed_get_fan_tach_ch_rpm(struct aspeed_pwm_tacho_data *priv,
 	type = priv->pwm_port_type[fan_tach_ch_source];
 
 	msec = (1000 / aspeed_get_fan_tach_ch_measure_period(priv, type));
-	usec = msec * 1000;
+	usec = msec * 1000 * 2;
 
 	ret = regmap_read_poll_timeout(
 		priv->regmap,
