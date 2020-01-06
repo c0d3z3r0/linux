@@ -162,8 +162,10 @@
 #define M_TACH_UNIT 0x1FFF
 #define INIT_FAN_CTRL 0xFF
 
-/* How long we sleep in us while waiting for an RPM result. */
-#define ASPEED_RPM_STATUS_SLEEP_USEC	500
+/* Time between readings to check for a measurement result */
+#define ASPEED_RPM_STATUS_SLEEP_USEC	200
+/* Timeout */
+#define ASPEED_RPM_STATUS_TIMEOUT_USEC	500 * 1000 /* 500 ms */
 
 #define MAX_CDEV_NAME_LEN 16
 
@@ -497,45 +499,15 @@ static void aspeed_set_pwm_port_fan_ctrl(struct aspeed_pwm_tacho_data *priv,
 	}
 }
 
-static u32 aspeed_get_fan_tach_ch_measure_period(struct aspeed_pwm_tacho_data
-						 *priv, u8 type)
-{
-	u32 clk;
-	u16 tacho_unit;
-	u8 clk_unit, div_h, div_l, tacho_div;
-
-	clk = priv->clk_freq;
-	clk_unit = priv->type_pwm_clock_unit[type];
-	div_h = priv->type_pwm_clock_division_h[type];
-	div_h = 0x1 << div_h;
-	div_l = priv->type_pwm_clock_division_l[type];
-	if (div_l == 0)
-		div_l = 1;
-	else
-		div_l = div_l * 2;
-
-	tacho_unit = priv->type_fan_tach_unit[type];
-	tacho_div = priv->type_fan_tach_clock_division[type];
-
-	tacho_div = 0x4 << (tacho_div * 2);
-	return clk / (clk_unit * div_h * div_l * tacho_div * tacho_unit);
-}
-
 static int aspeed_get_fan_tach_ch_rpm(struct aspeed_pwm_tacho_data *priv,
 				      u8 fan_tach_ch)
 {
-	u32 raw_data, tach_div, clk_source, msec, usec, val;
+	u32 raw_data, tach_div, clk_source, val;
 	u8 fan_tach_ch_source, type, mode, both;
 	int ret;
 
 	regmap_write(priv->regmap, ASPEED_PTCR_TRIGGER, 0);
 	regmap_write(priv->regmap, ASPEED_PTCR_TRIGGER, 0x1 << fan_tach_ch);
-
-	fan_tach_ch_source = priv->fan_tach_ch_source[fan_tach_ch];
-	type = priv->pwm_port_type[fan_tach_ch_source];
-
-	msec = (1000 / aspeed_get_fan_tach_ch_measure_period(priv, type));
-	usec = msec * 1000 * 2;
 
 	ret = regmap_read_poll_timeout(
 		priv->regmap,
@@ -543,12 +515,14 @@ static int aspeed_get_fan_tach_ch_rpm(struct aspeed_pwm_tacho_data *priv,
 		val,
 		(val & RESULT_STATUS_MASK),
 		ASPEED_RPM_STATUS_SLEEP_USEC,
-		usec);
+		ASPEED_RPM_STATUS_TIMEOUT_USEC);
 
 	/* return -ETIMEDOUT if we didn't get an answer. */
 	if (ret)
 		return ret;
 
+	fan_tach_ch_source = priv->fan_tach_ch_source[fan_tach_ch];
+	type = priv->pwm_port_type[fan_tach_ch_source];
 	raw_data = val & RESULT_VALUE_MASK;
 	tach_div = priv->type_fan_tach_clock_division[type];
 	/*
