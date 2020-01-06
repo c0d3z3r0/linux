@@ -149,7 +149,7 @@
 
 #define M_PWM_DIV_H 0x00
 #define M_PWM_DIV_L 0x05
-#define M_PWM_PERIOD 0x5F
+#define M_PWM_PERIOD 0x5C
 #define M_TACH_CLK_DIV 0x00
 /*
  * 5:4 Type N fan tach mode selection bit:
