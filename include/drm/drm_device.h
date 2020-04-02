@@ -67,6 +67,21 @@ struct drm_device {
 	/** @dev: Device structure of bus-device */
 	struct device *dev;
 
+	/**
+	 * @managed:
+	 *
+	 * Managed resources linked to the lifetime of this &drm_device as
+	 * tracked by @ref.
+	 */
+	struct {
+		/** @managed.resources: managed resources list */
+		struct list_head resources;
+		/** @managed.final_kfree: pointer for final kfree() call */
+		void *final_kfree;
+		/** @managed.lock: protects @managed.resources */
+		spinlock_t lock;
+	} managed;
+
 	/** @driver: DRM driver managing the device */
 	struct drm_driver *driver;
 
@@ -144,7 +159,7 @@ struct drm_device {
 	 * Usage counter for outstanding files open,
 	 * protected by drm_global_mutex
 	 */
-	int open_count;
+	atomic_t open_count;
 
 	/** @filelist_mutex: Protects @filelist. */
 	struct mutex filelist_mutex;

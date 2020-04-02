@@ -1356,9 +1356,15 @@ static int tda998x_connector_init(struct tda998x_priv *priv,
 
 /* DRM bridge functions */
 
-static int tda998x_bridge_attach(struct drm_bridge *bridge)
+static int tda998x_bridge_attach(struct drm_bridge *bridge,
+				 enum drm_bridge_attach_flags flags)
 {
 	struct tda998x_priv *priv = bridge_to_tda998x_priv(bridge);
+
+	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR) {
+		DRM_ERROR("Fix bridge driver to make connector optional!");
+		return -EINVAL;
+	}
 
 	return tda998x_connector_init(priv, bridge->dev);
 }
@@ -1943,9 +1949,9 @@ static int tda998x_create(struct device *dev)
 	cec_info.platform_data = &priv->cec_glue;
 	cec_info.irq = client->irq;
 
-	priv->cec = i2c_new_device(client->adapter, &cec_info);
-	if (!priv->cec) {
-		ret = -ENODEV;
+	priv->cec = i2c_new_client_device(client->adapter, &cec_info);
+	if (IS_ERR(priv->cec)) {
+		ret = PTR_ERR(priv->cec);
 		goto fail;
 	}
 
@@ -2022,7 +2028,7 @@ static int tda998x_encoder_init(struct device *dev, struct drm_device *drm)
 	if (ret)
 		goto err_encoder;
 
-	ret = drm_bridge_attach(&priv->encoder, &priv->bridge, NULL);
+	ret = drm_bridge_attach(&priv->encoder, &priv->bridge, NULL, 0);
 	if (ret)
 		goto err_bridge;
 

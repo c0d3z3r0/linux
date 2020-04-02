@@ -35,10 +35,10 @@
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_ioctl.h>
+#include <drm/drm_managed.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
-#include <drm/drm_vblank.h>
 
 #define DRIVER_NAME "cirrus"
 #define DRIVER_DESC "qemu cirrus vga"
@@ -152,8 +152,12 @@ static int cirrus_pitch(struct drm_framebuffer *fb)
 
 static void cirrus_set_start_address(struct cirrus_device *cirrus, u32 offset)
 {
+	int idx;
 	u32 addr;
 	u8 tmp;
+
+	if (!drm_dev_enter(&cirrus->dev, &idx))
+		return;
 
 	addr = offset >> 2;
 	wreg_crt(cirrus, 0x0c, (u8)((addr >> 8) & 0xff));
@@ -169,6 +173,8 @@ static void cirrus_set_start_address(struct cirrus_device *cirrus, u32 offset)
 	tmp &= 0x7f;
 	tmp |= (addr >> 12) & 0x80;
 	wreg_crt(cirrus, 0x1d, tmp);
+
+	drm_dev_exit(idx);
 }
 
 static int cirrus_mode_set(struct cirrus_device *cirrus,
@@ -177,8 +183,11 @@ static int cirrus_mode_set(struct cirrus_device *cirrus,
 {
 	int hsyncstart, hsyncend, htotal, hdispend;
 	int vtotal, vdispend;
-	int tmp;
+	int tmp, idx;
 	int sr07 = 0, hdr = 0;
+
+	if (!drm_dev_enter(&cirrus->dev, &idx))
+		return -1;
 
 	htotal = mode->htotal / 8;
 	hsyncend = mode->hsync_end / 8;
@@ -265,6 +274,7 @@ static int cirrus_mode_set(struct cirrus_device *cirrus,
 		hdr = 0xc5;
 		break;
 	default:
+		drm_dev_exit(idx);
 		return -1;
 	}
 
@@ -293,6 +303,8 @@ static int cirrus_mode_set(struct cirrus_device *cirrus,
 
 	/* Unblank (needed on S3 resume, vgabios doesn't do it then) */
 	outb(0x20, 0x3c0);
+
+	drm_dev_exit(idx);
 	return 0;
 }
 
@@ -301,10 +313,16 @@ static int cirrus_fb_blit_rect(struct drm_framebuffer *fb,
 {
 	struct cirrus_device *cirrus = fb->dev->dev_private;
 	void *vmap;
+	int idx, ret;
 
+	ret = -ENODEV;
+	if (!drm_dev_enter(&cirrus->dev, &idx))
+		goto out;
+
+	ret = -ENOMEM;
 	vmap = drm_gem_shmem_vmap(fb->obj[0]);
 	if (!vmap)
-		return -ENOMEM;
+		goto out_dev_exit;
 
 	if (cirrus->cpp == fb->format->cpp[0])
 		drm_fb_memcpy_dstclip(cirrus->vram,
@@ -324,7 +342,12 @@ static int cirrus_fb_blit_rect(struct drm_framebuffer *fb,
 		WARN_ON_ONCE("cpp mismatch");
 
 	drm_gem_shmem_vunmap(fb->obj[0], vmap);
-	return 0;
+	ret = 0;
+
+out_dev_exit:
+	drm_dev_exit(idx);
+out:
+	return ret;
 }
 
 static int cirrus_fb_blit_fullscreen(struct drm_framebuffer *fb)
@@ -434,13 +457,6 @@ static void cirrus_pipe_update(struct drm_simple_display_pipe *pipe,
 
 	if (drm_atomic_helper_damage_merged(old_state, state, &rect))
 		cirrus_fb_blit_rect(pipe->plane.state->fb, &rect);
-
-	if (crtc->state->event) {
-		spin_lock_irq(&crtc->dev->event_lock);
-		drm_crtc_send_vblank_event(crtc, crtc->state->event);
-		crtc->state->event = NULL;
-		spin_unlock_irq(&crtc->dev->event_lock);
-	}
 }
 
 static const struct drm_simple_display_pipe_funcs cirrus_pipe_funcs = {
@@ -494,11 +510,15 @@ static const struct drm_mode_config_funcs cirrus_mode_config_funcs = {
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
-static void cirrus_mode_config_init(struct cirrus_device *cirrus)
+static int cirrus_mode_config_init(struct cirrus_device *cirrus)
 {
 	struct drm_device *dev = &cirrus->dev;
+	int ret;
 
-	drm_mode_config_init(dev);
+	ret = drmm_mode_config_init(dev);
+	if (ret)
+		return ret;
+
 	dev->mode_config.min_width = 0;
 	dev->mode_config.min_height = 0;
 	dev->mode_config.max_width = CIRRUS_MAX_PITCH / 2;
@@ -506,6 +526,8 @@ static void cirrus_mode_config_init(struct cirrus_device *cirrus)
 	dev->mode_config.preferred_depth = 16;
 	dev->mode_config.prefer_shadow = 0;
 	dev->mode_config.funcs = &cirrus_mode_config_funcs;
+
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -536,7 +558,7 @@ static int cirrus_pci_probe(struct pci_dev *pdev,
 	if (ret)
 		return ret;
 
-	ret = pci_enable_device(pdev);
+	ret = pcim_enable_device(pdev);
 	if (ret)
 		return ret;
 
@@ -547,34 +569,38 @@ static int cirrus_pci_probe(struct pci_dev *pdev,
 	ret = -ENOMEM;
 	cirrus = kzalloc(sizeof(*cirrus), GFP_KERNEL);
 	if (cirrus == NULL)
-		goto err_pci_release;
+		return ret;
 
 	dev = &cirrus->dev;
-	ret = drm_dev_init(dev, &cirrus_driver, &pdev->dev);
-	if (ret)
-		goto err_free_cirrus;
+	ret = devm_drm_dev_init(&pdev->dev, dev, &cirrus_driver);
+	if (ret) {
+		kfree(cirrus);
+		return ret;
+	}
 	dev->dev_private = cirrus;
+	drmm_add_final_kfree(dev, cirrus);
 
-	ret = -ENOMEM;
-	cirrus->vram = ioremap(pci_resource_start(pdev, 0),
-			       pci_resource_len(pdev, 0));
+	cirrus->vram = devm_ioremap(&pdev->dev, pci_resource_start(pdev, 0),
+				    pci_resource_len(pdev, 0));
 	if (cirrus->vram == NULL)
-		goto err_dev_put;
+		return -ENOMEM;
 
-	cirrus->mmio = ioremap(pci_resource_start(pdev, 1),
-			       pci_resource_len(pdev, 1));
+	cirrus->mmio = devm_ioremap(&pdev->dev, pci_resource_start(pdev, 1),
+				    pci_resource_len(pdev, 1));
 	if (cirrus->mmio == NULL)
-		goto err_unmap_vram;
+		return -ENOMEM;
 
-	cirrus_mode_config_init(cirrus);
+	ret = cirrus_mode_config_init(cirrus);
+	if (ret)
+		return ret;
 
 	ret = cirrus_conn_init(cirrus);
 	if (ret < 0)
-		goto err_cleanup;
+		return ret;
 
 	ret = cirrus_pipe_init(cirrus);
 	if (ret < 0)
-		goto err_cleanup;
+		return ret;
 
 	drm_mode_config_reset(dev);
 
@@ -582,37 +608,18 @@ static int cirrus_pci_probe(struct pci_dev *pdev,
 	pci_set_drvdata(pdev, dev);
 	ret = drm_dev_register(dev, 0);
 	if (ret)
-		goto err_cleanup;
+		return ret;
 
 	drm_fbdev_generic_setup(dev, dev->mode_config.preferred_depth);
 	return 0;
-
-err_cleanup:
-	drm_mode_config_cleanup(dev);
-	iounmap(cirrus->mmio);
-err_unmap_vram:
-	iounmap(cirrus->vram);
-err_dev_put:
-	drm_dev_put(dev);
-err_free_cirrus:
-	kfree(cirrus);
-err_pci_release:
-	pci_release_regions(pdev);
-	return ret;
 }
 
 static void cirrus_pci_remove(struct pci_dev *pdev)
 {
 	struct drm_device *dev = pci_get_drvdata(pdev);
-	struct cirrus_device *cirrus = dev->dev_private;
 
-	drm_dev_unregister(dev);
-	drm_mode_config_cleanup(dev);
-	iounmap(cirrus->mmio);
-	iounmap(cirrus->vram);
-	drm_dev_put(dev);
-	kfree(cirrus);
-	pci_release_regions(pdev);
+	drm_dev_unplug(dev);
+	drm_atomic_helper_shutdown(dev);
 }
 
 static const struct pci_device_id pciidlist[] = {

@@ -112,7 +112,7 @@ __queue_and_release_pm(struct i915_request *rq,
 {
 	struct intel_gt_timelines *timelines = &engine->gt->timelines;
 
-	ENGINE_TRACE(engine, "\n");
+	ENGINE_TRACE(engine, "parking\n");
 
 	/*
 	 * We have to serialise all potential retirement paths with our
@@ -181,7 +181,7 @@ static bool switch_to_kernel_context(struct intel_engine_cs *engine)
 	 * Ergo, if we put ourselves on the timelines.active_list
 	 * (se intel_timeline_enter()) before we increment the
 	 * engine->wakeref.count, we may see the request completion and retire
-	 * it causing an undeflow of the engine->wakeref.
+	 * it causing an underflow of the engine->wakeref.
 	 */
 	flags = __timeline_mark_lock(ce);
 	GEM_BUG_ON(atomic_read(&ce->timeline->active_count) < 0);
@@ -249,7 +249,7 @@ static int __engine_park(struct intel_wakeref *wf)
 	if (!switch_to_kernel_context(engine))
 		return -EBUSY;
 
-	ENGINE_TRACE(engine, "\n");
+	ENGINE_TRACE(engine, "parked\n");
 
 	call_idle_barriers(engine); /* cleanup after wedging */
 
